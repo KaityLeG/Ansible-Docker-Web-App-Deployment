@@ -1,0 +1,97 @@
+- name: configure postgresql node
+  hosts: _ansible_postgresql
+  become: true
+  vars_files:
+    - secret.yml
+  tasks:
+    - name: Update packages
+      yum:
+        name: "*"
+        state: latest
+    - name: Uninstall older versions
+      yum:
+        name: "{{ item }}"
+        state: removed
+      loop:
+        - docker
+        - docker-client
+        - docker-client-latest
+        - docker-common
+        - docker-latest
+        - docker-latest-logrotate
+        - docker-logrotate
+        - docker-engine 
+    - name: Install yum-utils
+      yum:
+        name: yum-utils
+        state: latest
+
+    - name: Add docker repo
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: Install Docker
+      package:
+        name: docker-ce
+        state: latest
+
+    - name: Install pip
+      package:
+        name: python3-pip
+        state: present
+
+    - name: Install docker sdk
+      pip:
+        name: Docker
+
+    - name: Start Docker service
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Create build directory
+      file:
+        path: /home/ec2-user/postgresql
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy the sql script
+      copy:
+        src: /home/ec2-user/ansible/ansible-project/postgres/init.sql
+        dest: /home/ec2-user/postgresql
+    
+    - name: Copy the dockerfile
+      copy:
+        src: /home/ec2-user/ansible/ansible-project/postgres/Dockerfile
+        dest: /home/ec2-user/postgresql
+
+    - name: Remove container and image if exist
+      shell: "docker ps -q --filter 'name=oliver_postgre' && docker stop oliver_postgre && docker rm -fv oliver_postgre && docker image rm -f olivercw/postgre || echo 'Not Found'" 
+
+    - name: Build container image
+      docker_image:
+        name: olivercw/postgres
+        build:
+          path: /home/ec2-user/postgresql
+        source: build
+        state: present
+
+    - name: Create postgresql docker container
+      docker_container:
+        name: oliver_postgre
+        image: olivercw/postgres
+        state: started
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_PASSWORD: "{{ password }}"
+        volumes: /db-data:/var/lib/postgresql/data
+      register: container_info
+
+    - name: print the container container_info
+      debug:
+        var: container_info
